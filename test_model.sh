@@ -9,7 +9,7 @@ cuda_device=1
 config_file=configs/config.yaml
 
 # Set the checkpoint directory (as specified)
-checkpoint_dir="/mnt/disk3/mlaquatra/BDHPD_model/"
+checkpoint_dir="./bdhpd-ewa-pcgita-best/"
 
 # Set the configuration parameters
 wavelets=true

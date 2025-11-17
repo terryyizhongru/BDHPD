@@ -62,13 +62,26 @@ def evaluate_test_set(config, model, dataloader, device, criterions, return_embe
     return metrics
 
 def main(config):
-    # Load the test datasets
-    test_ewadb = get_dataset(config, "test", "ewadb", domain_id=0)
-    test_pcgita = get_dataset(config, "test", "pc_gita", domain_id=1)
+    # Load the test datasets based on active configuration
+    test_ewadb = None
+    test_pcgita = None
+    
+    if config.ewadb.active:
+        test_ewadb = get_dataset(config, "test", "ewadb", domain_id=0)
+        print("Test EWADB dataset length: ", len(test_ewadb))
+    else:
+        print("EWADB dataset is not active, skipping EWADB testing")
+    
+    if config.pc_gita.active:
+        test_pcgita = get_dataset(config, "test", "pc_gita", domain_id=1)
+        print("Test PCGITA dataset length: ", len(test_pcgita))
+    else:
+        print("PC-GITA dataset is not active, skipping PC-GITA testing")
+    
+    if not config.ewadb.active and not config.pc_gita.active:
+        raise ValueError("At least one dataset should be active for testing")
     
     print("Test datasets loaded successfully")
-    print("Test EWADB dataset length: ", len(test_ewadb))
-    print("Test PCGITA dataset length: ", len(test_pcgita))
 
     # Initialize device, model, and dataloader
     device = get_device(config)
@@ -92,9 +105,15 @@ def main(config):
     checkpoint_manager.load_best_model()
     print("Loaded best model from checkpoint")
     
-    # Create separate test dataloaders for each dataset
-    test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
-    test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
+    # Create separate test dataloaders for each active dataset
+    test_dl_ewadb = None
+    test_dl_pcgita = None
+    
+    if config.ewadb.active and test_ewadb is not None:
+        test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
+    
+    if config.pc_gita.active and test_pcgita is not None:
+        test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
     
     criterions = {}
     criterions["classification"] = get_classification_loss(config.model.num_classes)
@@ -102,23 +121,25 @@ def main(config):
     
     
     # Evaluate the model on the test sets with embeddings
-    test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_test_set(config, model, test_dl_ewadb, device, criterions, return_embeddings=True)
-    test_metrics_pcgita, embeddings_pcgita, labels_pcgita, sample_types_pcgita = evaluate_test_set(config, model, test_dl_pcgita, device, criterions, return_embeddings=True)
+    if test_dl_ewadb is not None:
+        test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_test_set(config, model, test_dl_ewadb, device, criterions, return_embeddings=True)
+        print(f"[EWADB] Test Metrics:")
+        for m in test_metrics_ewadb:
+            print(f"Test {m}: {test_metrics_ewadb[m]}")
+        
+        # Save the results and confusion matrices for EWADB
+        save_results_file(config.training.checkpoint_dir, test_metrics_ewadb, prefix="ewadb_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_ewadb["confusion_matrix"], prefix="ewadb_")
     
-    print(f"[EWADB] Test Metrics:")
-    for m in test_metrics_ewadb:
-        print(f"Test {m}: {test_metrics_ewadb[m]}")
-    
-    print(f"[PCGITA] Test Metrics:")
-    for m in test_metrics_pcgita:
-        print(f"Test {m}: {test_metrics_pcgita[m]}")
-    
-    # Save the results and confusion matrices for both test datasets
-    save_results_file(config.training.checkpoint_dir, test_metrics_ewadb, prefix="ewadb_")
-    save_results_file(config.training.checkpoint_dir, test_metrics_pcgita, prefix="pcgita_")
-    
-    save_confusion_matrix(config.training.checkpoint_dir, test_metrics_ewadb["confusion_matrix"], prefix="ewadb_")
-    save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
+    if test_dl_pcgita is not None:
+        test_metrics_pcgita, embeddings_pcgita, labels_pcgita, sample_types_pcgita = evaluate_test_set(config, model, test_dl_pcgita, device, criterions, return_embeddings=True)
+        print(f"[PCGITA] Test Metrics:")
+        for m in test_metrics_pcgita:
+            print(f"Test {m}: {test_metrics_pcgita[m]}")
+        
+        # Save the results and confusion matrices for PC-GITA
+        save_results_file(config.training.checkpoint_dir, test_metrics_pcgita, prefix="pcgita_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
 
 
 if __name__ == "__main__":

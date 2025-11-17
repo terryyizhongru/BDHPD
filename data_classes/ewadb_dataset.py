@@ -108,8 +108,15 @@ class EWADBDataset(torch.utils.data.Dataset):
         Args:
             audio_path: Path to the audio file.
         '''
-        audio_path = os.path.join(self.dataset_root_path, audio_path)
-        waveform, sample_rate = torchaudio.load(audio_path)
+        # Check if the path is already absolute (for CSV format)
+        if os.path.isabs(audio_path):
+            # For CSV format, use the path directly
+            full_audio_path = audio_path
+        else:
+            # For TSV format, join with dataset root path
+            full_audio_path = os.path.join(self.dataset_root_path, audio_path)
+            
+        waveform, sample_rate = torchaudio.load(full_audio_path)
         if sample_rate != self.feature_extractor.sampling_rate:
             # resample the audio
             waveform = torchaudio.transforms.Resample(sample_rate, self.feature_extractor.sampling_rate)(waveform)

@@ -170,9 +170,19 @@ def main(config):
     if config.pc_gita.active:
         train_pcgita = get_dataset(config, "train", "pc_gita", domain_id=1)
         validation_pcgita = get_dataset(config, "validation", "pc_gita", domain_id=1)
+    else:
+        train_pcgita = None
+        validation_pcgita = None
     
-    test_ewadb = get_dataset(config, "test", "ewadb", domain_id=0)
-    test_pcgita = get_dataset(config, "test", "pc_gita", domain_id=1)
+    if config.ewadb.active:
+        test_ewadb = get_dataset(config, "test", "ewadb", domain_id=0)
+    else:
+        test_ewadb = None
+        
+    if config.pc_gita.active:
+        test_pcgita = get_dataset(config, "test", "pc_gita", domain_id=1)
+    else:
+        test_pcgita = None
     
     # # merge train datasets using torch.utils.data.ConcatDataset
     if config.ewadb.active and config.pc_gita.active:
@@ -197,8 +207,15 @@ def main(config):
         val_dl_pcgita = get_single_dataloader(config, validation_pcgita, "validation")
     
     
-    test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
-    test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
+    if config.ewadb.active:
+        test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
+    else:
+        test_dl_ewadb = None
+        
+    if config.pc_gita.active:
+        test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
+    else:
+        test_dl_pcgita = None
     
     # train_dl = ListDataLoaders([train_dl_ewadb, train_dl_pcgita], weight_by_num_samples=True)
     
@@ -209,8 +226,8 @@ def main(config):
     if config.ewadb.active:  print ("Validation EWADB dataset length: ", len(validation_ewadb))
     if config.pc_gita.active: print ("Validation PCGITA dataset length: ", len(validation_pcgita))
     
-    print ("Test EWADB dataset length: ", len(test_ewadb))
-    print ("Test PCGITA dataset length: ", len(test_pcgita))
+    if config.ewadb.active: print ("Test EWADB dataset length: ", len(test_ewadb))
+    if config.pc_gita.active: print ("Test PCGITA dataset length: ", len(test_pcgita))
     
     # set number of domains
     config.model.num_domains = 2
@@ -307,29 +324,27 @@ def main(config):
     checkpoint_manager.load_best_model()
     
     # separate evaluation for test datasets
-    test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_one_epoch(config, model, test_dl_ewadb, device, criterions, "test", experiment, return_embeddings=True)
-    test_metrics_pcgita, embedding_pcgita, labels_pcgita, sample_types_pcgita = evaluate_one_epoch(config, model, test_dl_pcgita, device, criterions, "test", experiment, return_embeddings=True)
+    if config.ewadb.active:
+        test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_one_epoch(config, model, test_dl_ewadb, device, criterions, "test", experiment, return_embeddings=True)
+        print(f"[EWADB] Test Metrics")
+        for m in test_metrics_ewadb: print(f"Test {m}: {test_metrics_ewadb[m]}")
+        
+        # store results for EWADB test dataset
+        save_results_file(config.training.checkpoint_dir, test_metrics_ewadb, prefix="ewadb_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_ewadb["confusion_matrix"], prefix="ewadb_")
+        plot_embeddings(config.training.checkpoint_dir, embeddings_ewadb, labels_ewadb, sample_types_ewadb, prefix="ewadb_")
+        plot_embeddings_3d(config.training.checkpoint_dir, embeddings_ewadb, labels_ewadb, sample_types_ewadb, prefix="ewadb_")
     
-    print(f"[EWADB] Test Metrics")
-    for m in test_metrics_ewadb: print(f"Test {m}: {test_metrics_ewadb[m]}")
-    
-    print(f"[PCGITA] Test Metrics")
-    for m in test_metrics_pcgita: print(f"Test {m}: {test_metrics_pcgita[m]}")
-    
-    # separately store results for both test datasets
-    save_results_file(config.training.checkpoint_dir, test_metrics_ewadb, prefix="ewadb_")
-    save_results_file(config.training.checkpoint_dir, test_metrics_pcgita, prefix="pcgita_")
-    
-    # separately store confusion matrices for both test datasets
-    save_confusion_matrix(config.training.checkpoint_dir, test_metrics_ewadb["confusion_matrix"], prefix="ewadb_")
-    save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
-    
-    # separately plot embeddings for both test datasets
-    plot_embeddings(config.training.checkpoint_dir, embeddings_ewadb, labels_ewadb, sample_types_ewadb, prefix="ewadb_")
-    plot_embeddings(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
-    
-    plot_embeddings_3d(config.training.checkpoint_dir, embeddings_ewadb, labels_ewadb, sample_types_ewadb, prefix="ewadb_")
-    plot_embeddings_3d(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
+    if config.pc_gita.active:
+        test_metrics_pcgita, embedding_pcgita, labels_pcgita, sample_types_pcgita = evaluate_one_epoch(config, model, test_dl_pcgita, device, criterions, "test", experiment, return_embeddings=True)
+        print(f"[PCGITA] Test Metrics")
+        for m in test_metrics_pcgita: print(f"Test {m}: {test_metrics_pcgita[m]}")
+        
+        # store results for PCGITA test dataset
+        save_results_file(config.training.checkpoint_dir, test_metrics_pcgita, prefix="pcgita_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
+        plot_embeddings(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
+        plot_embeddings_3d(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
 
     
 if __name__ == "__main__":

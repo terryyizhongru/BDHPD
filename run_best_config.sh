@@ -3,7 +3,7 @@
 # Script to run the best configuration for the BDHPD paper
 
 # Set the CUDA device
-cuda_device=3
+cuda_device=1
 
 # Set the configuration file path
 config_file=configs/config.yaml

@@ -48,3 +48,5 @@ dist/
 *~
 *.bak
 *.tmp
+
+dataset_metadata/gita_splits2/
