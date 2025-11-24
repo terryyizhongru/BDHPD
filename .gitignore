@@ -50,3 +50,4 @@ dist/
 *.tmp
 
 dataset_metadata/gita_splits2/
+split_5fold/
