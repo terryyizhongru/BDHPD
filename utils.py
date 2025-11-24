@@ -111,6 +111,17 @@ def get_dataset(config, ds_type, dataset_name=None, domain_id=None):
         elif ds_type == "test": metadata_path = config.pc_gita.test_metadata_path
         else: raise ValueError(f"Dataset type {ds_type} not supported")
         config.model.num_classes = 2
+    elif dataset_name == "Neurovoz_and_PC_GITA":
+        metadata_type = config.Neurovoz_and_PC_GITA.metadata_type
+        dataset_root_path = config.Neurovoz_and_PC_GITA.dataset_root_path
+        audio_path_key = config.Neurovoz_and_PC_GITA.audio_path_key
+        label_key = config.Neurovoz_and_PC_GITA.label_key
+        label2id = config.Neurovoz_and_PC_GITA.label2id
+        if ds_type == "train": metadata_path = config.Neurovoz_and_PC_GITA.train_metadata_path
+        elif ds_type == "validation": metadata_path = config.Neurovoz_and_PC_GITA.validation_metadata_path
+        elif ds_type == "test": metadata_path = config.Neurovoz_and_PC_GITA.test_metadata_path
+        else: raise ValueError(f"Dataset type {ds_type} not supported")
+        config.model.num_classes = 2
     else:
         raise ValueError(f"Requested {dataset_name}, but it seems not supported")
     

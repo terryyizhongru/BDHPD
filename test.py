@@ -77,8 +77,14 @@ def main(config):
         print("Test PCGITA dataset length: ", len(test_pcgita))
     else:
         print("PC-GITA dataset is not active, skipping PC-GITA testing")
+        
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        test_neurovoz_pcgita = get_dataset(config, "test", "Neurovoz_and_PC_GITA", domain_id=1)
+        print("Test Neurovoz_and_PC_GITA dataset length: ", len(test_neurovoz_pcgita))
+    else:
+        print("Neurovoz_and_PC_GITA dataset is not active, skipping Neurovoz_and_PC_GITA testing")
     
-    if not config.ewadb.active and not config.pc_gita.active:
+    if not config.ewadb.active and not config.pc_gita.active and not (hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active):
         raise ValueError("At least one dataset should be active for testing")
     
     print("Test datasets loaded successfully")
@@ -108,13 +114,17 @@ def main(config):
     # Create separate test dataloaders for each active dataset
     test_dl_ewadb = None
     test_dl_pcgita = None
-    
+    test_dl_neurovoz_pcgita = None
+
     if config.ewadb.active and test_ewadb is not None:
         test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
-    
+
     if config.pc_gita.active and test_pcgita is not None:
         test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
-    
+        
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active and test_neurovoz_pcgita is not None:
+        test_dl_neurovoz_pcgita = get_single_dataloader(config, test_neurovoz_pcgita, "test")
+
     criterions = {}
     criterions["classification"] = get_classification_loss(config.model.num_classes)
     # criterions["domain_classification"] = get_classification_loss(config.model.num_domains)
@@ -140,6 +150,16 @@ def main(config):
         # Save the results and confusion matrices for PC-GITA
         save_results_file(config.training.checkpoint_dir, test_metrics_pcgita, prefix="pcgita_")
         save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
+    
+    if test_dl_neurovoz_pcgita is not None:
+        test_metrics_neurovoz_pcgita, embeddings_neurovoz_pcgita, labels_neurovoz_pcgita, sample_types_neurovoz_pcgita = evaluate_test_set(config, model, test_dl_neurovoz_pcgita, device, criterions, return_embeddings=True)
+        print(f"[Neurovoz_and_PC_GITA] Test Metrics:")
+        for m in test_metrics_neurovoz_pcgita:
+            print(f"Test {m}: {test_metrics_neurovoz_pcgita[m]}")
+        
+        # Save the results and confusion matrices for Neurovoz_and_PC_GITA
+        save_results_file(config.training.checkpoint_dir, test_metrics_neurovoz_pcgita, prefix="neurovoz_pcgita_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_neurovoz_pcgita["confusion_matrix"], prefix="neurovoz_pcgita_")
 
 
 if __name__ == "__main__":

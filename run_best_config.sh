@@ -3,13 +3,13 @@
 # Script to run the best configuration for the BDHPD paper
 
 # Set the CUDA device
-cuda_device=1
+cuda_device=0
 
 # Set the configuration file path
-config_file=configs/config.yaml
+config_file=configs/config_early.yaml
 
 # Set the checkpoint directory
-checkpoint_dir="ckpt_dir"
+checkpoint_dir="/data/storage1t/projects/early/BDHPD/test"
 
 # Set the configuration parameters based on the best model from the ablation study
 wavelets=true

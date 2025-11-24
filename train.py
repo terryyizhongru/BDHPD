@@ -57,9 +57,13 @@ def train_one_epoch(config, model, dataloader, optimizer, scheduler, device, cri
     
     p_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch}", leave=False)
     for i, batch in p_bar:
-        
+
         batch = {k: v.to(device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
-        
+
+        if "domain_labels" in batch:
+            unique_domains = batch["domain_labels"].unique()
+            print(f"[DEBUG] Batch {i} domain_labels unique: {unique_domains.tolist()}, num_domains: {config.model.num_domains}")
+
         optimizer.zero_grad()
         outputs = model(batch)
         
@@ -173,6 +177,13 @@ def main(config):
     else:
         train_pcgita = None
         validation_pcgita = None
+        
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        train_neurovoz_pcgita = get_dataset(config, "train", "Neurovoz_and_PC_GITA", domain_id=1)
+        validation_neurovoz_pcgita = get_dataset(config, "validation", "Neurovoz_and_PC_GITA", domain_id=1)
+    else:
+        train_neurovoz_pcgita = None
+        validation_neurovoz_pcgita = None
     
     if config.ewadb.active:
         test_ewadb = get_dataset(config, "test", "ewadb", domain_id=0)
@@ -183,53 +194,80 @@ def main(config):
         test_pcgita = get_dataset(config, "test", "pc_gita", domain_id=1)
     else:
         test_pcgita = None
+        
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        test_neurovoz_pcgita = get_dataset(config, "test", "Neurovoz_and_PC_GITA", domain_id=1)
+    else:
+        test_neurovoz_pcgita = None
     
     # # merge train datasets using torch.utils.data.ConcatDataset
-    if config.ewadb.active and config.pc_gita.active:
-        train_dataset = torch.utils.data.ConcatDataset([train_ewadb, train_pcgita])
-    elif config.ewadb.active:
-        train_dataset = train_ewadb
-    elif config.pc_gita.active:
-        train_dataset = train_pcgita
+    active_datasets = []
+    if config.ewadb.active:
+        active_datasets.append(train_ewadb)
+    if config.pc_gita.active:
+        active_datasets.append(train_pcgita)
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        active_datasets.append(train_neurovoz_pcgita)
+    
+    if len(active_datasets) > 1:
+        train_dataset = torch.utils.data.ConcatDataset(active_datasets)
+    elif len(active_datasets) == 1:
+        train_dataset = active_datasets[0]
     else:
-        raise ValueError(f"At least one of the datasets should be active: pc_gita: {config.pc_gita.active}, ewadb: {config.ewadb.active}")
+        neurovoz_active = hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active
+        raise ValueError(f"At least one of the datasets should be active: pc_gita: {config.pc_gita.active}, ewadb: {config.ewadb.active}, Neurovoz_and_PC_GITA: {neurovoz_active}")
     
     # create dataloader
     train_dl = get_single_dataloader(config, train_dataset, "train", balance_dataloader=config.training.balance_dataloaders)
-    if config.ewadb.active and config.pc_gita.active:
-        val_dl_ewadb = get_single_dataloader(config, validation_ewadb, "validation")
-        val_dl_pcgita = get_single_dataloader(config, validation_pcgita, "validation")
-    elif config.ewadb.active:
-        val_dl_ewadb = get_single_dataloader(config, validation_ewadb, "validation")
-        val_dl_pcgita = None
-    elif config.pc_gita.active:
-        val_dl_ewadb = None
-        val_dl_pcgita = get_single_dataloader(config, validation_pcgita, "validation")
     
+    # create dataloader
+    # Create validation dataloaders
+    val_dl_ewadb = None
+    val_dl_pcgita = None
+    val_dl_neurovoz_pcgita = None
+    
+    if config.ewadb.active:
+        val_dl_ewadb = get_single_dataloader(config, validation_ewadb, "validation")
+    if config.pc_gita.active:
+        val_dl_pcgita = get_single_dataloader(config, validation_pcgita, "validation")
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        val_dl_neurovoz_pcgita = get_single_dataloader(config, validation_neurovoz_pcgita, "validation")
+    
+    # Create test dataloaders
+    test_dl_ewadb = None
+    test_dl_pcgita = None
+    test_dl_neurovoz_pcgita = None
     
     if config.ewadb.active:
         test_dl_ewadb = get_single_dataloader(config, test_ewadb, "test")
-    else:
-        test_dl_ewadb = None
-        
     if config.pc_gita.active:
         test_dl_pcgita = get_single_dataloader(config, test_pcgita, "test")
-    else:
-        test_dl_pcgita = None
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        test_dl_neurovoz_pcgita = get_single_dataloader(config, test_neurovoz_pcgita, "test")
     
     # train_dl = ListDataLoaders([train_dl_ewadb, train_dl_pcgita], weight_by_num_samples=True)
     
     print ("Datasets loaded successfully")
     if config.ewadb.active:  print ("Train EWADB dataset length: ", len(train_ewadb))
     if config.pc_gita.active: print ("Train PCGITA dataset length: ", len(train_pcgita))
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active: print ("Train Neurovoz_and_PC_GITA dataset length: ", len(train_neurovoz_pcgita))
     
     if config.ewadb.active:  print ("Validation EWADB dataset length: ", len(validation_ewadb))
     if config.pc_gita.active: print ("Validation PCGITA dataset length: ", len(validation_pcgita))
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active: print ("Validation Neurovoz_and_PC_GITA dataset length: ", len(validation_neurovoz_pcgita))
     
     if config.ewadb.active: print ("Test EWADB dataset length: ", len(test_ewadb))
     if config.pc_gita.active: print ("Test PCGITA dataset length: ", len(test_pcgita))
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active: print ("Test Neurovoz_and_PC_GITA dataset length: ", len(test_neurovoz_pcgita))
     
-    # set number of domains
+    # set number of domains dynamically based on active datasets
+    # num_domains = 0
+    # if config.ewadb.active:
+    #     num_domains += 1
+    # if config.pc_gita.active:
+    #     num_domains += 1
+    # if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+    #     num_domains += 1
     config.model.num_domains = 2
     
     experiment = get_experiment(config)
@@ -239,6 +277,7 @@ def main(config):
     len_for_opt_and_sched = 0
     if config.ewadb.active: len_for_opt_and_sched += len(train_ewadb)
     if config.pc_gita.active: len_for_opt_and_sched += len(train_pcgita)
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active: len_for_opt_and_sched += len(train_neurovoz_pcgita)
     optimizer, scheduler = create_optimizer_and_scheduler(model, config, len_for_opt_and_sched)
     
     checkpoint_manager = CheckpointManager(
@@ -277,6 +316,11 @@ def main(config):
         
         if val_dl_pcgita is not None: val_metrics_pcgita = evaluate_one_epoch(config, model, val_dl_pcgita, device, criterions, epoch, experiment)
         else: val_metrics_pcgita = None
+
+        if val_dl_neurovoz_pcgita is not None: 
+            val_metrics_neurovoz = evaluate_one_epoch(config, model, val_dl_neurovoz_pcgita, device, criterions, epoch, experiment)
+        else:
+            val_metrics_neurovoz = None
         
         print(f"Epoch {epoch} Train Loss: {train_metrics['loss']}")
         print(f"Epoch {epoch} Train Metrics: {train_metrics}")
@@ -290,6 +334,11 @@ def main(config):
             print(f"[PCGITA] Epoch {epoch} metrics:")
             for m in val_metrics_pcgita: print(f"Val {m}: {val_metrics_pcgita[m]}")
             for m in val_metrics_pcgita: experiment.log(f"val_pcgita_{m}", val_metrics_pcgita[m])
+
+        if val_metrics_neurovoz is not None:
+            print(f"[Neurovoz_and_PC_GITA] Epoch {epoch} metrics:")
+            for m in val_metrics_neurovoz: print(f"Val {m}: {val_metrics_neurovoz[m]}")
+            for m in val_metrics_neurovoz: experiment.log(f"val_neurovoz_{m}", val_metrics_neurovoz[m])
         
         # add epoch_ as prefix to all metrics
         epoch_metrics = { f"epoch_{k}": v for k, v in train_metrics.items() }
@@ -304,7 +353,14 @@ def main(config):
             for m in m_to_be_used: current_metric.append(val_metrics_ewadb[m])
         if val_metrics_pcgita is not None: 
             for m in m_to_be_used: current_metric.append(val_metrics_pcgita[m])
-        
+        if val_metrics_neurovoz is not None:
+            for m in m_to_be_used: current_metric.append(val_metrics_neurovoz[m])
+
+        if len(current_metric) == 0:
+            # 没有任何验证集，退化为使用训练指标
+            for m in m_to_be_used:
+                current_metric.append(train_metrics[m])
+
         current_metric = sum(current_metric) / len(current_metric)
         
         # current metric is the average of the metrics from both datasets
