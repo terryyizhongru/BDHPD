@@ -42,10 +42,8 @@ def compute_contrastive_loss(config, criterion, batch, outputs, miner):
     else:
         miner_output = miner.mine(embeddings, labels, batch["sample_type"], batch["domain_labels"])
         contrastive_loss = criterion(embeddings, labels, miner_output)
-        
+
     # multiplier
-    # print config
-    print(f"Config: {config.training.contrastive_loss}")
     contrastive_loss *= config.training.contrastive_loss.multiplier
     return contrastive_loss
 
@@ -60,9 +58,9 @@ def train_one_epoch(config, model, dataloader, optimizer, scheduler, device, cri
 
         batch = {k: v.to(device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
-        if "domain_labels" in batch:
-            unique_domains = batch["domain_labels"].unique()
-            print(f"[DEBUG] Batch {i} domain_labels unique: {unique_domains.tolist()}, num_domains: {config.model.num_domains}")
+        # if "domain_labels" in batch:
+        #     unique_domains = batch["domain_labels"].unique()
+        #     print(f"[DEBUG] Batch {i} domain_labels unique: {unique_domains.tolist()}, num_domains: {config.model.num_domains}")
 
         optimizer.zero_grad()
         outputs = model(batch)

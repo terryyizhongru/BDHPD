@@ -218,12 +218,15 @@ class EWADBDataset(torch.utils.data.Dataset):
         '''
         sample = self.data[self.audio_path_key][idx]
         # if readtext, read_text, sentence, monologue, sentence, picture - type: speech
-        filters = ['readtext', 'read_text', 'sentence', 'monologue', 'picture']
-        if any(f in sample for f in filters):
+        filters1 = ['readtext', 'read_text', 'sentence', 'monologue', 'picture', 'SENTENCES', 'MONOLOGUE', "READ_TEXT"]
+        filters2 = ["DDK_ANALYSIS", "SUSTAINED-VOWELS"]
+        if any(f in sample for f in filters1):
             return 'speech'
-        else:
+        elif any(f in sample for f in filters2):
             # DDK, pataka, diadochokinetic - type: diadochokinetic
             return 'diadochokinetic'
+        else:
+            raise ValueError(f'Unknown sample type for sample: {sample}')
     
     def __getitem__(self, idx):
         '''

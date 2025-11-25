@@ -28,7 +28,7 @@ data:
 # Dataset specific information
 active_dataset: "ewadb"
 ewadb:
-  active: true
+  active: false
   train_metadata_path: "dataset_metadata/ewadb_train_metadata.tsv"
   test_metadata_path: "dataset_metadata/ewadb_test_metadata.tsv"
   validation_metadata_path: "dataset_metadata/ewadb_validation_metadata.tsv"
@@ -41,12 +41,12 @@ ewadb:
 pc_gita:
   active: true
   train_metadata_path: "dataset_metadata/pcgita_train_metadata.tsv"
-  test_metadata_path: "dataset_metadata/pcgita_test_metadata.tsv"
+  test_metadata_path: "dataset_metadata/pcgita_validation_metadata.tsv"
   validation_metadata_path: "dataset_metadata/pcgita_validation_metadata.tsv"
   metadata_type: tsv
   label_key: "DIAGNOSIS"
   audio_path_key: "AUDIOFILE"
-  dataset_root_path: /mnt/disk3/datasets/PC_GITA/
+  dataset_root_path: /data/storage1t/PC-GITA/
   label2id: { "Healthy": 0, "Parkinson": 1 }
 
 model:

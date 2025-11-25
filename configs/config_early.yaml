@@ -51,9 +51,9 @@ pc_gita:
 
 Neurovoz_and_PC_GITA:
   active: true
-  train_metadata_path: "split_5fold/folds_tsv_all/fold_1/sub_splits/train.tsv"
-  test_metadata_path: "split_5fold/folds_tsv_all/fold_1/test_early6PD6HC.tsv"
-  validation_metadata_path: "split_5fold/folds_tsv_all/fold_1/sub_splits/val.tsv"
+  train_metadata_path: "split_5fold/folds_v2_early_validation/folds_csv_idonly_v2_tsv/fold_1/sub_splits/train.tsv"
+  test_metadata_path: "split_5fold/folds_v2_early_validation/folds_csv_idonly_v2_tsv/fold_1/test_early6PD6HC.tsv"
+  validation_metadata_path: "split_5fold/folds_v2_early_validation/folds_csv_idonly_v2_tsv/fold_1/sub_splits/val_early6PD6HC.tsv"
   metadata_type: tsv
   label_key: "DIAGNOSIS"
   audio_path_key: "AUDIOFILE"
