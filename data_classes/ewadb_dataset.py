@@ -271,7 +271,9 @@ class EWADBDataset(torch.utils.data.Dataset):
         return_dict = {
             'input_values': features['input_values'].squeeze(),
             # 'attention_mask': features['attention_mask'].squeeze(),
-            'labels': torch.tensor(label)
+            'labels': torch.tensor(label),
+            # keep original audio path for test-time alignment
+            'audio_path': audio_path,
         }
         
         if stft_features is not None:
