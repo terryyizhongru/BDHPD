@@ -5,27 +5,24 @@
 
 cuda_device=${1:-0}
 
-BASE_META_ROOT="split_5fold/folds_v2_early_validation"
+BASE_META_ROOT="./split_5fold/folds_v2.1_early_validation_newcut//"
 
 META_SETS=(
-  "folds_csv_idonly_v2_tsv_noDDK"
-  "folds_csv_idonly_v2_tsv_noVowel"
-  "folds_tsv_DDK_ANALYSIS"
+  "folds_tsv_DDK_ANALYSIS_noPETAKA"
   "folds_tsv_DDK_ANALYSIS_PATAKA"
-  "folds_tsv_MONOLOGUE"
-  "folds_tsv_SENTENCES"
-  "folds_tsv_SUSTAINED-VOWELS"
+  "folds_tsv_SUSTAINED-VOWELS_onlyA123"
 )
 
-# META_SETS=(
-#   "folds_tsv_SENTENCES"
-#   "folds_tsv_SUSTAINED-VOWELS"
-# )
 
 for meta_dir in "${META_SETS[@]}"; do
   full_meta_root="${BASE_META_ROOT}/${meta_dir}"
   echo "================ Running 5-fold with metadata root: ${full_meta_root} ================"
-  bash run_5fold.sh "${cuda_device}" "${full_meta_root}" > "logs/run_5fold_${meta_dir}_$(date +%Y%m%d_%H%M%S).log" 2>&1
+  # Logs for this meta_dir under dedicated subdirectory
+  run_log_dir="logs/run_5fold/${meta_dir}"
+  mkdir -p "${run_log_dir}"
+  # bash run_5fold.sh "${cuda_device}" "${full_meta_root}" > "${run_log_dir}/run_5fold_all${meta_dir}_$(date +%Y%m%d_%H%M%S).log" 2>&1
+  bash run_5fold_early.sh "${cuda_device}" "${full_meta_root}" > "${run_log_dir}/run_5fold_persp${meta_dir}_$(date +%Y%m%d_%H%M%S).log" 2>&1
+
   echo "================ Finished 5-fold with metadata root: ${full_meta_root} ================"
   echo
 done

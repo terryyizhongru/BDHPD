@@ -8,11 +8,11 @@ wavelets=true
 contrastive_loss=true
 adain_layers=true
 conv_bottleneck=true
-balance_dataloaders=false
+balance_dataloaders=true
 freeze_ssl=false
 
 for fold in 1 2 3 4 5; do
-  checkpoint_dir="/data/storage2/projects/early/BDHPD/run_all/${meta_root}/fold_${fold}"
+  checkpoint_dir="/data/storage2/projects/early/BDHPD/run_earlybalance${meta_root}/fold_${fold}"
   # Put logs under a structured directory per meta_root
   # Use only the last path component of meta_root to keep logs one-level deep
   meta_name="${meta_root##*/}"
@@ -31,7 +31,7 @@ for fold in 1 2 3 4 5; do
     --training.contrastive_loss.active=${contrastive_loss} \
     --model.use_adain_layers=${adain_layers} \
     --model.use_conv_bottleneck_layer=${conv_bottleneck} \
-    --Neurovoz_and_PC_GITA.train_metadata_path="${meta_root}/fold_${fold}/sub_splits/train.tsv" \
+    --Neurovoz_and_PC_GITA.train_metadata_path="${meta_root}/fold_${fold}/sub_splits/train_earlybalance.tsv" \
     --Neurovoz_and_PC_GITA.validation_metadata_path="${meta_root}/fold_${fold}/sub_splits/val_early6PD6HC.tsv" \
     --Neurovoz_and_PC_GITA.test_metadata_path="${meta_root}/fold_${fold}/test_early6PD6HC.tsv" \
     2>&1 | tee -a "${log_file}"
@@ -49,7 +49,7 @@ for fold in 1 2 3 4 5; do
     --training.contrastive_loss.active=${contrastive_loss} \
     --model.use_adain_layers=${adain_layers} \
     --model.use_conv_bottleneck_layer=${conv_bottleneck} \
-    --Neurovoz_and_PC_GITA.train_metadata_path="${meta_root}/fold_${fold}/sub_splits/train.tsv" \
+    --Neurovoz_and_PC_GITA.train_metadata_path="${meta_root}/fold_${fold}/sub_splits/train_earlybalance.tsv" \
     --Neurovoz_and_PC_GITA.validation_metadata_path="${meta_root}/fold_${fold}/sub_splits/val_early6PD6HC.tsv" \
     --Neurovoz_and_PC_GITA.test_metadata_path="${meta_root}/fold_${fold}/test_early6PD6HC.tsv" \
     2>&1 | tee -a "${log_file}"
