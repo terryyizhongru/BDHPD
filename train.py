@@ -7,6 +7,8 @@ import numpy as np
 from yaml_config_manager import load_config
 from tqdm import tqdm
 import os
+import json
+from typing import Optional
 
 from data_classes.ewadb_dataset import EWADBDataset
 from model_classes.audio_classification_model import AudioClassificationModel
@@ -23,6 +25,43 @@ from utils import set_all_seeds_for_reproducibility, plot_embeddings, plot_embed
 from matplotlib import pyplot as plt
 
 from pytorch_metric_learning import losses
+
+
+def _safe_div(a: float, b: float) -> float:
+    return float(a) / float(b) if b else 0.0
+
+
+def _select_threshold_max_f1(y_true: np.ndarray, y_score: np.ndarray, num_thresholds: int = 101) -> float:
+    """Select a single threshold that maximizes positive-class F1 on (y_true, y_score)."""
+    y_true = np.asarray(y_true).astype(int)
+    y_score = np.asarray(y_score).astype(float)
+
+    if y_true.size == 0 or y_score.size == 0:
+        return 0.5
+
+    # If only one class present, threshold tuning is ill-defined.
+    if np.unique(y_true).size < 2:
+        return 0.5
+
+    thresholds = np.linspace(0.0, 1.0, int(num_thresholds))
+    best_t = 0.5
+    best_f1 = -1.0
+
+    for t in thresholds:
+        y_pred = (y_score >= t).astype(int)
+        tp = int(((y_pred == 1) & (y_true == 1)).sum())
+        fp = int(((y_pred == 1) & (y_true == 0)).sum())
+        fn = int(((y_pred == 0) & (y_true == 1)).sum())
+
+        precision = _safe_div(tp, tp + fp)
+        recall = _safe_div(tp, tp + fn)
+        f1 = _safe_div(2.0 * precision * recall, precision + recall)
+
+        if f1 > best_f1:
+            best_f1 = f1
+            best_t = float(t)
+
+    return best_t
 
 def compute_classification_loss(config, criterion, batch, outputs):
     if config.model.num_classes == 2:
@@ -52,6 +91,7 @@ def train_one_epoch(config, model, dataloader, optimizer, scheduler, device, cri
     running_loss = 0.0
     all_labels = []
     all_predictions = []
+    all_scores = []
     
     p_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch}", leave=False)
     for i, batch in p_bar:
@@ -90,8 +130,9 @@ def train_one_epoch(config, model, dataloader, optimizer, scheduler, device, cri
             logits = outputs["logits"].squeeze(1)
             
             # apply sigmoid to binary classification
-            current_predictions = torch.sigmoid(logits).detach().cpu().numpy()
-            current_predictions = np.where(current_predictions > 0.5, 1, 0)
+            current_scores = torch.sigmoid(logits).detach().cpu().numpy()
+            current_predictions = np.where(current_scores > 0.5, 1, 0)
+            all_scores.extend(current_scores.tolist())
         else:
             # apply softmax to multiclass classification
             current_predictions = torch.softmax(logits, dim=-1).argmax(dim=-1).cpu().numpy()
@@ -101,15 +142,33 @@ def train_one_epoch(config, model, dataloader, optimizer, scheduler, device, cri
             
         p_bar.set_postfix(postfix_dict)
     
-    metrics = compute_metrics(all_labels, all_predictions, is_binary_classification=config.model.num_classes == 2)
+    metrics = compute_metrics(
+        all_labels,
+        all_predictions,
+        is_binary_classification=config.model.num_classes == 2,
+        y_scores=all_scores if config.model.num_classes == 2 else None,
+    )
     metrics["loss"] = running_loss / len(dataloader)
     return metrics
 
-def evaluate_one_epoch(config, model, dataloader, device, criterions, epoch, experiment, return_embeddings=False):
+def evaluate_one_epoch(
+    config,
+    model,
+    dataloader,
+    device,
+    criterions,
+    epoch,
+    experiment,
+    return_embeddings: bool = False,
+    threshold: Optional[float] = None,
+    threshold_strategy: str = "fixed_0.5",
+    threshold_grid: int = 101,
+):
     model.eval()
     running_loss = 0.0
     all_labels = []
     all_predictions = []
+    all_scores = []
     all_embeddings = []
     all_sample_types = []
     
@@ -131,22 +190,73 @@ def evaluate_one_epoch(config, model, dataloader, device, criterions, epoch, exp
             running_loss += loss.item()
             
             if config.model.num_classes == 2:
-                # apply sigmoid to binary classification
-                current_predictions = torch.sigmoid(logits).detach().cpu().numpy()
-                current_predictions = np.where(current_predictions > 0.5, 1, 0)
+                # collect sigmoid scores for binary classification
+                current_scores = torch.sigmoid(logits).detach().cpu().numpy()
+                all_scores.extend(current_scores.tolist())
             else:
                 # apply softmax to multiclass classification
                 current_predictions = torch.softmax(logits, dim=-1).argmax(dim=-1).cpu().numpy()
+                all_predictions.extend(current_predictions)
             
             all_labels.extend(batch["labels"].cpu().numpy())
-            all_predictions.extend(current_predictions)
             all_embeddings.extend(outputs["embeddings"].cpu().numpy())
             all_sample_types.extend(batch["sample_type"].cpu().numpy())
         
             p_bar.set_postfix({"loss": running_loss / (i + 1)})
             
-    metrics = compute_metrics(all_labels, all_predictions, is_binary_classification=config.model.num_classes == 2)
+    used_threshold = None
+    if config.model.num_classes == 2:
+        y_true = np.asarray(all_labels).astype(int)
+        y_score = np.asarray(all_scores).astype(float)
+
+        def _pos_f1_from_pred(y_true_arr: np.ndarray, y_pred_arr: np.ndarray) -> float:
+            tp = int(((y_pred_arr == 1) & (y_true_arr == 1)).sum())
+            fp = int(((y_pred_arr == 1) & (y_true_arr == 0)).sum())
+            fn = int(((y_pred_arr == 0) & (y_true_arr == 1)).sum())
+
+            precision = _safe_div(tp, tp + fp)
+            recall = _safe_div(tp, tp + fn)
+            return _safe_div(2.0 * precision * recall, precision + recall)
+
+        if threshold is not None:
+            used_threshold = float(threshold)
+        else:
+            if str(threshold_strategy).lower() == "max_f1":
+                used_threshold = _select_threshold_max_f1(y_true, y_score, num_thresholds=threshold_grid)
+            else:
+                used_threshold = 0.5
+
+        y_pred_used = (y_score >= used_threshold).astype(int)
+        all_predictions = y_pred_used.tolist()
+
+    metrics = compute_metrics(
+        all_labels,
+        all_predictions,
+        is_binary_classification=config.model.num_classes == 2,
+        y_scores=all_scores if config.model.num_classes == 2 else None,
+    )
     metrics["loss"] = running_loss / len(dataloader)
+    if used_threshold is not None:
+        metrics["threshold"] = used_threshold
+
+    # Extra threshold-comparison logging data (only when tuning threshold with max_f1).
+    if config.model.num_classes == 2 and used_threshold is not None:
+        y_true_arr = np.asarray(all_labels).astype(int)
+        y_score_arr = np.asarray(all_scores).astype(float)
+
+        y_pred_used_arr = (y_score_arr >= float(used_threshold)).astype(int)
+        metrics["pos_f1"] = _pos_f1_from_pred(y_true_arr, y_pred_used_arr)
+
+        if threshold is None and str(threshold_strategy).lower() == "max_f1":
+            y_pred_05_arr = (y_score_arr >= 0.5).astype(int)
+            metrics_05 = compute_metrics(
+                all_labels,
+                y_pred_05_arr.tolist(),
+                is_binary_classification=True,
+                y_scores=all_scores,
+            )
+            metrics["f1_at_0.5"] = metrics_05.get("f1")
+            metrics["pos_f1_at_0.5"] = _pos_f1_from_pred(y_true_arr, y_pred_05_arr)
     if return_embeddings:
         return metrics, all_embeddings, all_labels, all_sample_types
     return metrics
@@ -160,7 +270,8 @@ def main(config):
     # test_dataset = get_dataset(config, "test")
     # validation_dataset = get_dataset(config, "validation")
     
-    set_all_seeds_for_reproducibility()
+    # Use configurable seed so repeated runs can vary deterministically.
+    set_all_seeds_for_reproducibility(getattr(config.training, "seed", 42))
     
     if config.ewadb.active:
         train_ewadb = get_dataset(config, "train", "ewadb", domain_id=0)
@@ -284,7 +395,7 @@ def main(config):
         optimizer = optimizer,
         scheduler = scheduler,
         device = device,
-        lower_is_better = config.validation.metric_lower_is_better
+        lower_is_better = config.training.validation.metric_lower_is_better
     )
     
     criterions = {}
@@ -376,10 +487,111 @@ def main(config):
     
     # load best model
     checkpoint_manager.load_best_model()
+
+    # Tune a single threshold on validation (best model), then apply to test.
+    tuned_thresholds = {}
+    threshold_strategy = getattr(getattr(config.training, "validation", object()), "threshold_strategy", "max_f1")
+    threshold_grid = int(getattr(getattr(config.training, "validation", object()), "threshold_grid", 101))
+
+    if config.model.num_classes == 2:
+        if val_dl_ewadb is not None:
+            m = evaluate_one_epoch(
+                config,
+                model,
+                val_dl_ewadb,
+                device,
+                criterions,
+                "val(best)",
+                experiment,
+                return_embeddings=False,
+                threshold=None,
+                threshold_strategy=threshold_strategy,
+                threshold_grid=threshold_grid,
+            )
+            tuned_thresholds["ewadb"] = m.get("threshold", 0.5)
+            if str(threshold_strategy).lower() == "max_f1":
+                print(
+                    f"[THRESHOLD][ewadb] best_thr={m.get('threshold', 0.5):.4f}, "
+                    f"pos_f1@best={m.get('pos_f1')}, pos_f1@0.5={m.get('pos_f1_at_0.5')}, "
+                    f"f1@best={m.get('f1')}, f1@0.5={m.get('f1_at_0.5')}"
+                )
+        if val_dl_pcgita is not None:
+            m = evaluate_one_epoch(
+                config,
+                model,
+                val_dl_pcgita,
+                device,
+                criterions,
+                "val(best)",
+                experiment,
+                return_embeddings=False,
+                threshold=None,
+                threshold_strategy=threshold_strategy,
+                threshold_grid=threshold_grid,
+            )
+            tuned_thresholds["pc_gita"] = m.get("threshold", 0.5)
+            if str(threshold_strategy).lower() == "max_f1":
+                print(
+                    f"[THRESHOLD][pc_gita] best_thr={m.get('threshold', 0.5):.4f}, "
+                    f"pos_f1@best={m.get('pos_f1')}, pos_f1@0.5={m.get('pos_f1_at_0.5')}, "
+                    f"f1@best={m.get('f1')}, f1@0.5={m.get('f1_at_0.5')}"
+                )
+        if val_dl_neurovoz_pcgita is not None:
+            m = evaluate_one_epoch(
+                config,
+                model,
+                val_dl_neurovoz_pcgita,
+                device,
+                criterions,
+                "val(best)",
+                experiment,
+                return_embeddings=False,
+                threshold=None,
+                threshold_strategy=threshold_strategy,
+                threshold_grid=threshold_grid,
+            )
+            tuned_thresholds["Neurovoz_and_PC_GITA"] = m.get("threshold", 0.5)
+            if str(threshold_strategy).lower() == "max_f1":
+                print(
+                    f"[THRESHOLD][Neurovoz_and_PC_GITA] best_thr={m.get('threshold', 0.5):.4f}, "
+                    f"pos_f1@best={m.get('pos_f1')}, pos_f1@0.5={m.get('pos_f1_at_0.5')}, "
+                    f"f1@best={m.get('f1')}, f1@0.5={m.get('f1_at_0.5')}"
+                )
+
+    if tuned_thresholds:
+        print(f"[THRESHOLD] Tuned on val (strategy={threshold_strategy}, grid={threshold_grid}): {tuned_thresholds}")
+
+        # Persist tuned thresholds so standalone test.py can reuse them.
+        os.makedirs(config.training.checkpoint_dir, exist_ok=True)
+        thresholds_path = os.path.join(config.training.checkpoint_dir, "tuned_thresholds.json")
+        with open(thresholds_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "thresholds": tuned_thresholds,
+                    "strategy": threshold_strategy,
+                    "grid": threshold_grid,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+        print(f"[THRESHOLD] Saved tuned thresholds to: {thresholds_path}")
     
     # separate evaluation for test datasets
     if config.ewadb.active:
-        test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_one_epoch(config, model, test_dl_ewadb, device, criterions, "test", experiment, return_embeddings=True)
+        test_threshold = tuned_thresholds.get("ewadb", 0.5)
+        test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb = evaluate_one_epoch(
+            config,
+            model,
+            test_dl_ewadb,
+            device,
+            criterions,
+            "test",
+            experiment,
+            return_embeddings=True,
+            threshold=test_threshold,
+            threshold_strategy="fixed",
+        )
         print(f"[EWADB] Test Metrics")
         for m in test_metrics_ewadb: print(f"Test {m}: {test_metrics_ewadb[m]}")
         
@@ -390,7 +602,19 @@ def main(config):
         plot_embeddings_3d(config.training.checkpoint_dir, embeddings_ewadb, labels_ewadb, sample_types_ewadb, prefix="ewadb_")
     
     if config.pc_gita.active:
-        test_metrics_pcgita, embedding_pcgita, labels_pcgita, sample_types_pcgita = evaluate_one_epoch(config, model, test_dl_pcgita, device, criterions, "test", experiment, return_embeddings=True)
+        test_threshold = tuned_thresholds.get("pc_gita", 0.5)
+        test_metrics_pcgita, embedding_pcgita, labels_pcgita, sample_types_pcgita = evaluate_one_epoch(
+            config,
+            model,
+            test_dl_pcgita,
+            device,
+            criterions,
+            "test",
+            experiment,
+            return_embeddings=True,
+            threshold=test_threshold,
+            threshold_strategy="fixed",
+        )
         print(f"[PCGITA] Test Metrics")
         for m in test_metrics_pcgita: print(f"Test {m}: {test_metrics_pcgita[m]}")
         
@@ -399,6 +623,29 @@ def main(config):
         save_confusion_matrix(config.training.checkpoint_dir, test_metrics_pcgita["confusion_matrix"], prefix="pcgita_")
         plot_embeddings(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
         plot_embeddings_3d(config.training.checkpoint_dir, embedding_pcgita, labels_pcgita, sample_types_pcgita, prefix="pcgita_")
+
+    if hasattr(config, 'Neurovoz_and_PC_GITA') and config.Neurovoz_and_PC_GITA.active:
+        test_threshold = tuned_thresholds.get("Neurovoz_and_PC_GITA", 0.5)
+        test_metrics_neurovoz, embeddings_neurovoz, labels_neurovoz, sample_types_neurovoz = evaluate_one_epoch(
+            config,
+            model,
+            test_dl_neurovoz_pcgita,
+            device,
+            criterions,
+            "test",
+            experiment,
+            return_embeddings=True,
+            threshold=test_threshold,
+            threshold_strategy="fixed",
+        )
+        print(f"[Neurovoz_and_PC_GITA] Test Metrics")
+        for m in test_metrics_neurovoz:
+            print(f"Test {m}: {test_metrics_neurovoz[m]}")
+
+        save_results_file(config.training.checkpoint_dir, test_metrics_neurovoz, prefix="neurovoz_pcgita_")
+        save_confusion_matrix(config.training.checkpoint_dir, test_metrics_neurovoz["confusion_matrix"], prefix="neurovoz_pcgita_")
+        # plot_embeddings(config.training.checkpoint_dir, embeddings_neurovoz, labels_neurovoz, sample_types_neurovoz, prefix="neurovoz_pcgita_")
+        # plot_embeddings_3d(config.training.checkpoint_dir, embeddings_neurovoz, labels_neurovoz, sample_types_neurovoz, prefix="neurovoz_pcgita_")
 
     
 if __name__ == "__main__":

@@ -25,26 +25,49 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from tqdm import tqdm
 
-def compute_metrics(reference, predictions, verbose=False, is_binary_classification=False):
+def compute_metrics(reference, predictions, verbose=False, is_binary_classification=False, y_scores=None):
     # Calculate basic metrics
     accuracy = accuracy_score(reference, predictions)
-    precision, recall, f1, _ = precision_recall_fscore_support(reference, predictions, average="macro")
+    # NOTE:
+    # - For binary classification: report positive-class (label=1) precision/recall/F1.
+    # - For multiclass: keep macro averaging.
+    if is_binary_classification:
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            reference,
+            predictions,
+            average="binary",
+            pos_label=1,
+            zero_division=0,
+        )
+    else:
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            reference,
+            predictions,
+            average="macro",
+            zero_division=0,
+        )
     
     # Initialize binary classification specific metrics
     roc_auc = 0.0
     sensitivity = 0.0
     specificity = 0.0
     
+    cm = confusion_matrix(reference, predictions)
+
     if is_binary_classification:
-        # Compute ROC AUC
+        # Compute ROC AUC.
+        # NOTE: ROC-AUC should be computed from continuous scores/probabilities.
+        # We keep accuracy/precision/recall/f1 based on hard predictions.
         try:
-            roc_auc = roc_auc_score(reference, predictions)
+            if y_scores is None:
+                roc_auc = roc_auc_score(reference, predictions)
+            else:
+                roc_auc = roc_auc_score(reference, y_scores)
         except ValueError:
             if verbose:
                 print("ROC AUC gave ValueError, setting to 0.0")
         
         # Compute confusion matrix metrics
-        cm = confusion_matrix(reference, predictions)
         if cm.shape == (2, 2):
             tp, fn = cm[1, 1], cm[1, 0]
             tn, fp = cm[0, 0], cm[0, 1]
@@ -200,7 +223,7 @@ def get_single_dataloader(config, dataset, ds_type, balance_dataloader=False):
         num_workers=config.training.num_workers,
         pin_memory=True,
         sampler=sampler,
-        worker_init_fn=lambda _: set_all_seeds_for_reproducibility()
+        worker_init_fn=lambda worker_id: set_all_seeds_for_reproducibility(getattr(config.training, "seed", 42) + worker_id)
     )
     
     print(f"Created {ds_type} dataloader with {len(dataloader)} batches")

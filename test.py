@@ -4,6 +4,7 @@ from yaml_config_manager import load_config
 from tqdm import tqdm
 import os
 import csv
+import json
 
 from model_classes.audio_classification_model import AudioClassificationModel
 from additional_classes.checkpoint_manager import CheckpointManager
@@ -77,11 +78,35 @@ def save_detailed_results_tsv(config, dataset_name, test_metadata_path, audio_pa
     print(f"[INFO] Saved detailed results TSV for {dataset_name} to {output_tsv}")
 
 
-def evaluate_test_set(config, model, dataloader, device, criterions, return_embeddings=False, return_logits_and_paths=False):
+def load_tuned_thresholds(checkpoint_dir: str) -> dict:
+    """Load thresholds saved by train.py (if present)."""
+    path = os.path.join(checkpoint_dir, "tuned_thresholds.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload.get("thresholds", {}) if isinstance(payload, dict) else {}
+    except Exception as e:
+        print(f"[WARN] Failed to load tuned thresholds from {path}: {e}")
+        return {}
+
+
+def evaluate_test_set(
+    config,
+    model,
+    dataloader,
+    device,
+    criterions,
+    return_embeddings=False,
+    return_logits_and_paths=False,
+    threshold: float = 0.5,
+):
     model.eval()
     running_loss = 0.0
     all_labels = []
     all_predictions = []
+    all_scores = []
     all_embeddings = []
     all_sample_types = []
     all_logits = []
@@ -109,8 +134,9 @@ def evaluate_test_set(config, model, dataloader, device, criterions, return_embe
             
             if config.model.num_classes == 2:
                 prob = torch.sigmoid(logits)
-                current_predictions = prob.detach().cpu().numpy()
-                current_predictions = np.where(current_predictions > 0.5, 1, 0)
+                current_scores = prob.detach().cpu().numpy()
+                all_scores.extend(current_scores.tolist())
+                current_predictions = np.where(current_scores >= float(threshold), 1, 0)
             else:
                 prob = torch.softmax(logits, dim=-1)
                 current_predictions = prob.argmax(dim=-1).cpu().numpy()
@@ -133,8 +159,15 @@ def evaluate_test_set(config, model, dataloader, device, criterions, return_embe
                     all_sample_types.extend([0] * len(batch["labels"]))
                     print("Warning: 'sample_type' not found in batch. Defaulting to speech type (0).")
     
-    metrics = compute_metrics(all_labels, all_predictions, is_binary_classification=config.model.num_classes == 2)
+    metrics = compute_metrics(
+        all_labels,
+        all_predictions,
+        is_binary_classification=config.model.num_classes == 2,
+        y_scores=all_scores if config.model.num_classes == 2 else None,
+    )
     metrics["loss"] = running_loss / len(dataloader)
+    if config.model.num_classes == 2:
+        metrics["threshold"] = float(threshold)
 
     if return_embeddings:
         all_embeddings = np.concatenate(all_embeddings, axis=0)
@@ -194,7 +227,7 @@ def main(config):
         optimizer=None,
         scheduler=None,
         device=device,
-        lower_is_better=config.validation.metric_lower_is_better
+        lower_is_better=config.training.validation.metric_lower_is_better
     )
     
     # Load the best model from checkpoint
@@ -220,10 +253,24 @@ def main(config):
     # criterions["domain_classification"] = get_classification_loss(config.model.num_domains)
     
     
+    tuned_thresholds = load_tuned_thresholds(config.training.checkpoint_dir)
+    if tuned_thresholds:
+        print(f"[THRESHOLD] Loaded tuned thresholds: {tuned_thresholds}")
+    else:
+        print("[THRESHOLD] No tuned_thresholds.json found; using default threshold=0.5")
+
     # Evaluate the model on the test sets with embeddings and save detailed TSVs
     if test_dl_ewadb is not None:
+        thr = float(tuned_thresholds.get("ewadb", 0.5))
         test_metrics_ewadb, embeddings_ewadb, labels_ewadb, sample_types_ewadb, logits_ewadb, paths_ewadb, preds_ewadb = evaluate_test_set(
-            config, model, test_dl_ewadb, device, criterions, return_embeddings=True, return_logits_and_paths=True
+            config,
+            model,
+            test_dl_ewadb,
+            device,
+            criterions,
+            return_embeddings=True,
+            return_logits_and_paths=True,
+            threshold=thr,
         )
         print(f"[EWADB] Test Metrics:")
         for m in test_metrics_ewadb:
@@ -238,8 +285,16 @@ def main(config):
         save_detailed_results_tsv(config, "ewadb", tsv_path_ewadb, paths_ewadb, logits_ewadb, labels_ewadb, preds_ewadb)
     
     if test_dl_pcgita is not None:
+        thr = float(tuned_thresholds.get("pc_gita", 0.5))
         test_metrics_pcgita, embeddings_pcgita, labels_pcgita, sample_types_pcgita, logits_pcgita, paths_pcgita, preds_pcgita = evaluate_test_set(
-            config, model, test_dl_pcgita, device, criterions, return_embeddings=True, return_logits_and_paths=True
+            config,
+            model,
+            test_dl_pcgita,
+            device,
+            criterions,
+            return_embeddings=True,
+            return_logits_and_paths=True,
+            threshold=thr,
         )
         print(f"[PCGITA] Test Metrics:")
         for m in test_metrics_pcgita:
@@ -253,8 +308,16 @@ def main(config):
         save_detailed_results_tsv(config, "pcgita", tsv_path_pcgita, paths_pcgita, logits_pcgita, labels_pcgita, preds_pcgita)
     
     if test_dl_neurovoz_pcgita is not None:
+        thr = float(tuned_thresholds.get("Neurovoz_and_PC_GITA", 0.5))
         test_metrics_neurovoz_pcgita, embeddings_neurovoz_pcgita, labels_neurovoz_pcgita, sample_types_neurovoz_pcgita, logits_neurovoz_pcgita, paths_neurovoz_pcgita, preds_neurovoz_pcgita = evaluate_test_set(
-            config, model, test_dl_neurovoz_pcgita, device, criterions, return_embeddings=True, return_logits_and_paths=True
+            config,
+            model,
+            test_dl_neurovoz_pcgita,
+            device,
+            criterions,
+            return_embeddings=True,
+            return_logits_and_paths=True,
+            threshold=thr,
         )
         print(f"[Neurovoz_and_PC_GITA] Test Metrics:")
         for m in test_metrics_neurovoz_pcgita:
